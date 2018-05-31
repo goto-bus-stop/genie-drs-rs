@@ -61,6 +61,8 @@ pub struct DRSTable {
     offset: u32,
     /// Number of resource entries in this table.
     num_resources: u32,
+    /// Resources.
+    resources: Vec<DRSResource>,
 }
 
 impl DRSTable {
@@ -74,7 +76,28 @@ impl DRSTable {
             resource_type,
             offset,
             num_resources,
+            resources: vec![],
         })
+    }
+
+    /// Read the table itself.
+    fn read_resources<T: Read>(&mut self, source: &mut T) -> Result<(), Error> {
+        for i in 0..self.num_resources {
+            self.resources.push(DRSResource::from(source)?);
+        }
+        Ok(())
+    }
+
+    fn resources(&self) -> DRSResourceIterator {
+        self.resources.iter()
+    }
+    fn resources_mut(&mut self) -> DRSResourceIteratorMut {
+        self.resources.iter_mut()
+    }
+
+    fn get_resource(&self, id: u32) -> Result<&DRSResource, Error> {
+        self.resources().find(|resource| { resource.id == id })
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource does not exist"))
     }
 }
 
@@ -118,7 +141,9 @@ impl DRSResource {
 }
 
 pub type DRSTableIterator<'a> = slice::Iter<'a, DRSTable>;
+pub type DRSTableIteratorMut<'a> = slice::IterMut<'a, DRSTable>;
 pub type DRSResourceIterator<'a> = slice::Iter<'a, DRSResource>;
+pub type DRSResourceIteratorMut<'a> = slice::IterMut<'a, DRSResource>;
 
 /// A DRS archive.
 #[derive(Debug)]
@@ -126,7 +151,6 @@ pub struct DRS<T: Read + Seek> {
     handle: T,
     header: Option<DRSHeader>,
     tables: Vec<DRSTable>,
-    resources: Vec<DRSResource>,
 }
 
 impl<T: Read + Seek> DRS<T> {
@@ -137,7 +161,6 @@ impl<T: Read + Seek> DRS<T> {
             handle,
             header: None,
             tables: vec![],
-            resources: vec![],
         }
     }
 
@@ -163,11 +186,8 @@ impl<T: Read + Seek> DRS<T> {
 
     /// Read the list of resources.
     fn read_dictionary(&mut self) -> Result<(), Error> {
-        for table in &self.tables {
-            for _ in 0..table.num_resources {
-                let resource = DRSResource::from(&mut self.handle)?;
-                self.resources.push(resource);
-            }
+        for table in &mut self.tables {
+            table.read_resources(&mut self.handle)?;
         }
         Ok(())
     }
@@ -180,14 +200,27 @@ impl<T: Read + Seek> DRS<T> {
         Ok(())
     }
 
+    pub fn get_table_mut(&mut self, resource_type: [u8; 4]) -> Result<&mut DRSTable, Error> {
+        self.tables.iter_mut().find(|table| { table.resource_type == resource_type })
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource type does not exist"))
+    }
+
+    pub fn get_table(&self, resource_type: [u8; 4]) -> Result<&DRSTable, Error> {
+        self.tables.iter().find(|table| { table.resource_type == resource_type })
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource type does not exist"))
+    }
+
+    pub fn get_resource(&self, resource_type: [u8; 4], id: u32) -> Result<&DRSResource, Error> {
+        self.get_table(resource_type)?.get_resource(id)
+    }
+
     /// Read a file from the DRS archive.
-    pub fn get_resource(&mut self, id: u32) -> Result<Box<[u8]>, Error> {
-        let resource = self.resources.iter().find(|resource| { resource.id == id })
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource does not exist"))?;
+    pub fn read_resource(&mut self, resource_type: [u8; 4], id: u32) -> Result<Box<[u8]>, Error> {
+        let &DRSResource { size, offset, .. } = self.get_resource(resource_type, id)?;
 
-        self.handle.seek(SeekFrom::Start(u64::from(resource.offset)))?;
+        self.handle.seek(SeekFrom::Start(u64::from(offset)))?;
 
-        let mut buf = vec![0 as u8; resource.size as usize];
+        let mut buf = vec![0 as u8; size as usize];
         self.handle.read_exact(&mut buf)?;
 
         Ok(buf.into_boxed_slice())
@@ -196,9 +229,8 @@ impl<T: Read + Seek> DRS<T> {
     pub fn tables(&self) -> DRSTableIterator {
         self.tables.iter()
     }
-
-    pub fn resources(&self) -> DRSResourceIterator {
-        self.resources.iter()
+    pub fn tables_mut(&mut self) -> DRSTableIteratorMut {
+        self.tables.iter_mut()
     }
 }
 
@@ -214,9 +246,11 @@ mod tests {
         drs.read().unwrap();
         println!("{:?}", drs);
 
-        for resource in drs.resources() {
-            let content = drs.get_resource(resource.id).unwrap();
-            println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
+        for table in drs.tables_mut() {
+            for resource in table.resources_mut() {
+                let content = drs.read_resource(table.resource_type, resource.id).unwrap();
+                println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
+            }
         }
 
         assert!(false);
