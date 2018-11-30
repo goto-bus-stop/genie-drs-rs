@@ -1,9 +1,31 @@
+//! .drs is the resource archive file format for the Genie Engine, used by Age of Empires 1/2 and
+//! Star Wars: Galactic Battlegrounds. .drs files contain tables, each of which contain resources
+//! of a single type. Resources are identified by a numeric identifier.
+//!
+//! ## Example
+//!
+//! ```rust
+//! extern crate genie_drs;
+//! use std::fs::File;
+//! use genie_drs::DRS;
+//!
+//! let file = File::open("test.drs").unwrap();
+//! let mut drs = DRS::new(file).unwrap();
+//!
+//! for table in drs.tables_mut() {
+//!     for resource in table.resources_mut() {
+//!         let content = drs.read_resource(table.resource_type, resource.id).unwrap();
+//!         println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
+//!     }
+//! }
+//! ```
+
 extern crate byteorder;
 
 use std::io::{Read, Seek, SeekFrom, Error, ErrorKind};
 use std::str;
 use std::slice;
-use byteorder::{ReadBytesExt, LittleEndian};
+use byteorder::{ReadBytesExt, LE};
 
 /// The DRS archive header.
 pub struct DRSHeader {
@@ -21,15 +43,15 @@ pub struct DRSHeader {
 
 impl DRSHeader {
     /// Read a DRS archive header from a `Read`able handle.
-    fn from<T: Read>(source: &mut T) -> Result<DRSHeader, Error> {
+    fn from<R: Read>(source: &mut R) -> Result<DRSHeader, Error> {
         let mut banner_msg = [0 as u8; 40];
         let mut version = [0 as u8; 4];
         let mut password = [0 as u8; 12];
         source.read_exact(&mut banner_msg)?;
         source.read_exact(&mut version)?;
         source.read_exact(&mut password)?;
-        let num_resource_types = source.read_u32::<LittleEndian>()?;
-        let directory_size = source.read_u32::<LittleEndian>()?;
+        let num_resource_types = source.read_u32::<LE>()?;
+        let directory_size = source.read_u32::<LE>()?;
         Ok(DRSHeader {
             banner_msg,
             version,
@@ -67,11 +89,11 @@ pub struct DRSTable {
 
 impl DRSTable {
     /// Read a DRS table header from a `Read`able handle.
-    fn from<T: Read>(source: &mut T) -> Result<DRSTable, Error> {
+    fn from<R: Read>(source: &mut R) -> Result<DRSTable, Error> {
         let mut resource_type = [0 as u8; 4];
         source.read_exact(&mut resource_type)?;
-        let offset = source.read_u32::<LittleEndian>()?;
-        let num_resources = source.read_u32::<LittleEndian>()?;
+        let offset = source.read_u32::<LE>()?;
+        let num_resources = source.read_u32::<LE>()?;
         Ok(DRSTable {
             resource_type,
             offset,
@@ -81,7 +103,7 @@ impl DRSTable {
     }
 
     /// Read the table itself.
-    fn read_resources<T: Read>(&mut self, source: &mut T) -> Result<(), Error> {
+    fn read_resources<R: Read>(&mut self, source: &mut R) -> Result<(), Error> {
         for i in 0..self.num_resources {
             self.resources.push(DRSResource::from(source)?);
         }
@@ -128,10 +150,10 @@ pub struct DRSResource {
 
 impl DRSResource {
     /// Read DRS resource metadata from a `Read`able handle.
-    fn from<T: Read>(source: &mut T) -> Result<DRSResource, Error> {
-        let id = source.read_u32::<LittleEndian>()?;
-        let offset = source.read_u32::<LittleEndian>()?;
-        let size = source.read_u32::<LittleEndian>()?;
+    fn from<R: Read>(source: &mut R) -> Result<DRSResource, Error> {
+        let id = source.read_u32::<LE>()?;
+        let offset = source.read_u32::<LE>()?;
+        let size = source.read_u32::<LE>()?;
         Ok(DRSResource {
             id,
             offset,
@@ -147,21 +169,25 @@ pub type DRSResourceIteratorMut<'a> = slice::IterMut<'a, DRSResource>;
 
 /// A DRS archive.
 #[derive(Debug)]
-pub struct DRS<T: Read + Seek> {
-    handle: T,
+pub struct DRS<R: Read + Seek> {
+    handle: R,
     header: Option<DRSHeader>,
     tables: Vec<DRSTable>,
 }
 
-impl<T: Read + Seek> DRS<T> {
+impl<R: Read + Seek> DRS<R> {
     /// Create a new DRS archive reader for the given handle.
     /// The handle must be `Read`able and `Seek`able.
-    pub fn new(handle: T) -> DRS<T> {
-        DRS {
+    pub fn new(handle: R) -> Result<DRS<R>, Error> {
+        let mut drs = DRS {
             handle,
             header: None,
             tables: vec![],
-        }
+        };
+        drs.read_header()?;
+        drs.read_tables()?;
+        drs.read_dictionary()?;
+        Ok(drs)
     }
 
     /// Read the DRS archive header.
@@ -192,14 +218,6 @@ impl<T: Read + Seek> DRS<T> {
         Ok(())
     }
 
-    /// Read the DRS archive, table, and resource metadata.
-    pub fn read(&mut self) -> Result<(), Error> {
-        self.read_header()?;
-        self.read_tables()?;
-        self.read_dictionary()?;
-        Ok(())
-    }
-
     pub fn get_table_mut(&mut self, resource_type: [u8; 4]) -> Result<&mut DRSTable, Error> {
         self.tables.iter_mut().find(|table| { table.resource_type == resource_type })
             .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource type does not exist"))
@@ -212,6 +230,11 @@ impl<T: Read + Seek> DRS<T> {
 
     pub fn get_resource(&self, resource_type: [u8; 4], id: u32) -> Result<&DRSResource, Error> {
         self.get_table(resource_type)?.get_resource(id)
+    }
+
+    pub fn get_resource_type(&self, id: u32) -> Option<[u8; 4]> {
+        self.tables.iter().find(|table| table.get_resource(id).is_ok())
+            .map(|table| table.resource_type)
     }
 
     /// Read a file from the DRS archive.
@@ -242,8 +265,7 @@ mod tests {
     #[test]
     fn it_works() {
         let file = File::open("test.drs").unwrap();
-        let mut drs = ::DRS::new(file);
-        drs.read().unwrap();
+        let mut drs = ::DRS::new(file).unwrap();
         println!("{:?}", drs);
 
         for table in drs.tables_mut() {
