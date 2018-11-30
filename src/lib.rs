@@ -9,12 +9,12 @@
 //! use std::fs::File;
 //! use genie_drs::DRS;
 //!
-//! let file = File::open("test.drs").unwrap();
-//! let mut drs = DRS::new(file).unwrap();
+//! let mut file = File::open("test.drs").unwrap();
+//! let drs = DRS::new(&mut file).unwrap();
 //!
-//! for table in drs.tables_mut() {
-//!     for resource in table.resources_mut() {
-//!         let content = drs.read_resource(table.resource_type, resource.id).unwrap();
+//! for table in drs.tables() {
+//!     for resource in table.resources() {
+//!         let content = drs.read_resource(&mut file, table.resource_type, resource.id).unwrap();
 //!         println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
 //!     }
 //! }
@@ -113,9 +113,6 @@ impl DRSTable {
     fn resources(&self) -> DRSResourceIterator {
         self.resources.iter()
     }
-    fn resources_mut(&mut self) -> DRSResourceIteratorMut {
-        self.resources.iter_mut()
-    }
 
     fn get_resource(&self, id: u32) -> Result<&DRSResource, Error> {
         self.resources().find(|resource| { resource.id == id })
@@ -163,45 +160,43 @@ impl DRSResource {
 }
 
 pub type DRSTableIterator<'a> = slice::Iter<'a, DRSTable>;
-pub type DRSTableIteratorMut<'a> = slice::IterMut<'a, DRSTable>;
 pub type DRSResourceIterator<'a> = slice::Iter<'a, DRSResource>;
-pub type DRSResourceIteratorMut<'a> = slice::IterMut<'a, DRSResource>;
 
 /// A DRS archive.
 #[derive(Debug)]
-pub struct DRS<R: Read + Seek> {
-    handle: R,
+pub struct DRS {
     header: Option<DRSHeader>,
     tables: Vec<DRSTable>,
 }
 
-impl<R: Read + Seek> DRS<R> {
+impl DRS {
     /// Create a new DRS archive reader for the given handle.
     /// The handle must be `Read`able and `Seek`able.
-    pub fn new(handle: R) -> Result<DRS<R>, Error> {
+    pub fn new<R>(handle: &mut R) -> Result<DRS, Error>
+        where R: Read + Seek
+    {
         let mut drs = DRS {
-            handle,
             header: None,
             tables: vec![],
         };
-        drs.read_header()?;
-        drs.read_tables()?;
-        drs.read_dictionary()?;
+        drs.read_header(handle)?;
+        drs.read_tables(handle)?;
+        drs.read_dictionary(handle)?;
         Ok(drs)
     }
 
     /// Read the DRS archive header.
-    fn read_header(&mut self) -> Result<(), Error> {
-        self.header = Some(DRSHeader::from(&mut self.handle)?);
+    fn read_header<R: Read + Seek>(&mut self, handle: &mut R) -> Result<(), Error> {
+        self.header = Some(DRSHeader::from(handle)?);
         Ok(())
     }
 
     /// Read the list of tables.
-    fn read_tables(&mut self) -> Result<(), Error> {
+    fn read_tables<R: Read + Seek>(&mut self, handle: &mut R) -> Result<(), Error> {
         match self.header {
             Some(ref header) => {
                 for _ in 0..header.num_resource_types {
-                    let table = DRSTable::from(&mut self.handle)?;
+                    let table = DRSTable::from(handle)?;
                     self.tables.push(table);
                 }
             },
@@ -211,9 +206,9 @@ impl<R: Read + Seek> DRS<R> {
     }
 
     /// Read the list of resources.
-    fn read_dictionary(&mut self) -> Result<(), Error> {
+    fn read_dictionary<R: Read + Seek>(&mut self, handle: &mut R) -> Result<(), Error> {
         for table in &mut self.tables {
-            table.read_resources(&mut self.handle)?;
+            table.read_resources(handle)?;
         }
         Ok(())
     }
@@ -238,22 +233,19 @@ impl<R: Read + Seek> DRS<R> {
     }
 
     /// Read a file from the DRS archive.
-    pub fn read_resource(&mut self, resource_type: [u8; 4], id: u32) -> Result<Box<[u8]>, Error> {
+    pub fn read_resource<R: Read + Seek>(&self, handle: &mut R, resource_type: [u8; 4], id: u32) -> Result<Box<[u8]>, Error> {
         let &DRSResource { size, offset, .. } = self.get_resource(resource_type, id)?;
 
-        self.handle.seek(SeekFrom::Start(u64::from(offset)))?;
+        handle.seek(SeekFrom::Start(u64::from(offset)))?;
 
         let mut buf = vec![0 as u8; size as usize];
-        self.handle.read_exact(&mut buf)?;
+        handle.read_exact(&mut buf)?;
 
         Ok(buf.into_boxed_slice())
     }
 
     pub fn tables(&self) -> DRSTableIterator {
         self.tables.iter()
-    }
-    pub fn tables_mut(&mut self) -> DRSTableIteratorMut {
-        self.tables.iter_mut()
     }
 }
 
@@ -264,13 +256,13 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let file = File::open("test.drs").unwrap();
-        let mut drs = ::DRS::new(file).unwrap();
+        let mut file = File::open("test.drs").unwrap();
+        let drs = ::DRS::new(&mut file).unwrap();
         println!("{:?}", drs);
 
-        for table in drs.tables_mut() {
-            for resource in table.resources_mut() {
-                let content = drs.read_resource(table.resource_type, resource.id).unwrap();
+        for table in drs.tables() {
+            for resource in table.resources() {
+                let content = drs.read_resource(&mut file, table.resource_type, resource.id).unwrap();
                 println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
             }
         }
