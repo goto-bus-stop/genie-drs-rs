@@ -7,10 +7,10 @@
 //! ```rust
 //! extern crate genie_drs;
 //! use std::fs::File;
-//! use genie_drs::DRS;
+//! use genie_drs::DRSReader;
 //!
 //! let mut file = File::open("test.drs").unwrap();
-//! let drs = DRS::new(&mut file).unwrap();
+//! let drs = DRSReader::new(&mut file).unwrap();
 //!
 //! for table in drs.tables() {
 //!     for resource in table.resources() {
@@ -168,20 +168,20 @@ impl DRSResource {
 pub type DRSTableIterator<'a> = slice::Iter<'a, DRSTable>;
 pub type DRSResourceIterator<'a> = slice::Iter<'a, DRSResource>;
 
-/// A DRS archive.
+/// A DRS archive reader.
 #[derive(Debug)]
-pub struct DRS {
+pub struct DRSReader {
     header: Option<DRSHeader>,
     tables: Vec<DRSTable>,
 }
 
-impl DRS {
+impl DRSReader {
     /// Create a new DRS archive reader for the given handle.
     /// The handle must be `Read`able and `Seek`able.
-    pub fn new<R>(handle: &mut R) -> Result<DRS, Error>
+    pub fn new<R>(handle: &mut R) -> Result<DRSReader, Error>
         where R: Read + Seek
     {
-        let mut drs = DRS {
+        let mut drs = DRSReader {
             header: None,
             tables: vec![],
         };
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn it_works() {
         let mut file = File::open("test.drs").unwrap();
-        let drs = ::DRS::new(&mut file).unwrap();
+        let drs = ::DRSReader::new(&mut file).unwrap();
         let mut expected = vec![
             // (reversed_type, id, size)
             (b"  sj", 1, 632),
