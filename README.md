@@ -12,7 +12,7 @@ Add to Cargo.toml:
 
 ```toml
 [dependencies]
-genie-drs = { git = "https://github.com/goto-bus-stop/genie-drs-rs.git" }
+genie-drs = { git = "https://github.com/goto-bus-stop/genie-drs-rs.git", branch = "default" }
 ```
 
 ## Example
