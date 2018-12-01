@@ -110,17 +110,19 @@ impl DRSTable {
         Ok(())
     }
 
+    /// Get the number of resources in this table.
     pub fn len(&self) -> usize {
         self.num_resources as usize
     }
 
+    /// Iterate over the resources in this table.
     pub fn resources(&self) -> DRSResourceIterator {
         self.resources.iter()
     }
 
-    pub fn get_resource(&self, id: u32) -> Result<&DRSResource, Error> {
+    /// Find a resource by ID.
+    pub fn get_resource(&self, id: u32) -> Option<&DRSResource> {
         self.resources().find(|resource| { resource.id == id })
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource does not exist"))
     }
 }
 
@@ -217,28 +219,27 @@ impl DRS {
         Ok(())
     }
 
-    pub fn get_table_mut(&mut self, resource_type: [u8; 4]) -> Result<&mut DRSTable, Error> {
-        self.tables.iter_mut().find(|table| { table.resource_type == resource_type })
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource type does not exist"))
-    }
-
-    pub fn get_table(&self, resource_type: [u8; 4]) -> Result<&DRSTable, Error> {
+    /// Get the table for the given resource type.
+    pub fn get_table(&self, resource_type: [u8; 4]) -> Option<&DRSTable> {
         self.tables.iter().find(|table| { table.resource_type == resource_type })
-            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource type does not exist"))
     }
 
-    pub fn get_resource(&self, resource_type: [u8; 4], id: u32) -> Result<&DRSResource, Error> {
-        self.get_table(resource_type)?.get_resource(id)
+    /// Get a resource of a given type and ID.
+    pub fn get_resource(&self, resource_type: [u8; 4], id: u32) -> Option<&DRSResource> {
+        self.get_table(resource_type).and_then(|table| table.get_resource(id))
     }
 
+    /// Get the type of a resource with the given ID.
     pub fn get_resource_type(&self, id: u32) -> Option<[u8; 4]> {
-        self.tables.iter().find(|table| table.get_resource(id).is_ok())
+        self.tables.iter().find(|table| table.get_resource(id).is_some())
             .map(|table| table.resource_type)
     }
 
     /// Read a file from the DRS archive.
     pub fn read_resource<R: Read + Seek>(&self, handle: &mut R, resource_type: [u8; 4], id: u32) -> Result<Box<[u8]>, Error> {
-        let &DRSResource { size, offset, .. } = self.get_resource(resource_type, id)?;
+        let &DRSResource { size, offset, .. } = self.get_resource(resource_type, id)
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource not found in this archive"))
+            ?;
 
         handle.seek(SeekFrom::Start(u64::from(offset)))?;
 
@@ -248,6 +249,7 @@ impl DRS {
         Ok(buf.into_boxed_slice())
     }
 
+    /// Iterate over the tables in this DRS archive.
     pub fn tables(&self) -> DRSTableIterator {
         self.tables.iter()
     }
