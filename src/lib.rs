@@ -15,7 +15,7 @@
 //! for table in drs.tables() {
 //!     for resource in table.resources() {
 //!         let content = drs.read_resource(&mut file, table.resource_type, resource.id).unwrap();
-//!         println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
+//!         println!("{}: {:?}", resource.id, std::str::from_utf8(&content).unwrap());
 //!     }
 //! }
 //! ```
@@ -23,8 +23,8 @@
 extern crate byteorder;
 
 use std::io::{Read, Seek, SeekFrom, Error, ErrorKind};
-use std::str;
 use std::slice;
+use std::str;
 use byteorder::{ReadBytesExt, LE};
 
 /// The DRS archive header.
@@ -78,7 +78,7 @@ impl std::fmt::Debug for DRSHeader {
 /// A table containing resource entries.
 pub struct DRSTable {
     /// Type of the resource as a little-endian char array.
-    resource_type: [u8; 4],
+    pub resource_type: [u8; 4],
     /// Offset in the DRS archive where this table's resource entries can be found.
     offset: u32,
     /// Number of resource entries in this table.
@@ -104,17 +104,21 @@ impl DRSTable {
 
     /// Read the table itself.
     fn read_resources<R: Read>(&mut self, source: &mut R) -> Result<(), Error> {
-        for i in 0..self.num_resources {
+        for _ in 0..self.num_resources {
             self.resources.push(DRSResource::from(source)?);
         }
         Ok(())
     }
 
-    fn resources(&self) -> DRSResourceIterator {
+    pub fn len(&self) -> usize {
+        self.num_resources as usize
+    }
+
+    pub fn resources(&self) -> DRSResourceIterator {
         self.resources.iter()
     }
 
-    fn get_resource(&self, id: u32) -> Result<&DRSResource, Error> {
+    pub fn get_resource(&self, id: u32) -> Result<&DRSResource, Error> {
         self.resources().find(|resource| { resource.id == id })
             .ok_or_else(|| Error::new(ErrorKind::NotFound, "Resource does not exist"))
     }
@@ -138,11 +142,11 @@ impl std::fmt::Debug for DRSTable {
 #[derive(Debug)]
 pub struct DRSResource {
     /// The resource ID.
-    id: u32,
+    pub id: u32,
     /// The offset into the DRS archive where the resource can be found.
     offset: u32,
     /// The size in bytes of the resource.
-    size: u32,
+    pub size: u32,
 }
 
 impl DRSResource {
@@ -251,22 +255,29 @@ impl DRS {
 
 #[cfg(test)]
 mod tests {
-    use std::str;
     use std::fs::File;
 
     #[test]
     fn it_works() {
         let mut file = File::open("test.drs").unwrap();
         let drs = ::DRS::new(&mut file).unwrap();
-        println!("{:?}", drs);
+        let mut expected = vec![
+            // (reversed_type, id, size)
+            (b"  sj", 1, 632),
+            (b"  sj", 2, 452),
+            (b"  sj", 3, 38),
+            (b"nosj", 4, 710),
+        ];
 
         for table in drs.tables() {
             for resource in table.resources() {
                 let content = drs.read_resource(&mut file, table.resource_type, resource.id).unwrap();
-                println!("{}: {:?}", resource.id, str::from_utf8(&content).unwrap());
+                assert_eq!(expected.remove(0), (
+                    &table.resource_type,
+                    resource.id,
+                    content.len()
+                ));
             }
         }
-
-        assert!(false);
     }
 }
