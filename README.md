@@ -12,7 +12,7 @@ Add to Cargo.toml:
 
 ```toml
 [dependencies]
-genie-drs = "^0.1.0"
+genie-drs = { git = "https://github.com/goto-bus-stop/genie-drs-rs.git" }
 ```
 
 ## Example
