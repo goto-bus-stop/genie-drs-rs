@@ -124,6 +124,13 @@ impl DRSTable {
     pub fn get_resource(&self, id: u32) -> Option<&DRSResource> {
         self.resources().find(|resource| { resource.id == id })
     }
+
+    pub fn resource_ext(&self) -> String {
+        let mut resource_type = [0 as u8; 4];
+        resource_type.clone_from_slice(&self.resource_type);
+        resource_type.reverse();
+        str::from_utf8(&resource_type).unwrap().trim().to_string()
+    }
 }
 
 impl std::fmt::Debug for DRSTable {
